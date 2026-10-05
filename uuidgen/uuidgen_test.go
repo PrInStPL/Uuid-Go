@@ -5,137 +5,166 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
-func TestGenerateVersion4(t *testing.T) {
-	id, err := Generate("4")
+func mustGenerate(t *testing.T, version int) uuid.UUID {
+	t.Helper()
+	id, err := Generate(version)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("generate v%d: %v", version, err)
 	}
-	if id.Version() != 4 {
-		t.Fatalf("expected version 4, got %d", id.Version())
-	}
+	return id
 }
 
-func TestGenerateVersion7(t *testing.T) {
-	id, err := Generate("7")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id.Version() != 7 {
-		t.Fatalf("expected version 7, got %d", id.Version())
+func toInt(id uuid.UUID) string {
+	return new(big.Int).SetBytes(id[:]).Text(10)
+}
+
+func TestGenerate(t *testing.T) {
+	for _, version := range []int{4, 7} {
+		id := mustGenerate(t, version)
+		if int(id.Version()) != version {
+			t.Fatalf("expected version %d, got %d", version, id.Version())
+		}
+		if id.Variant() != uuid.RFC4122 {
+			t.Fatalf("expected RFC 4122 variant, got %s", id.Variant())
+		}
 	}
 }
 
 func TestGenerateInvalidVersion(t *testing.T) {
-	if _, err := Generate("1"); err == nil {
-		t.Fatal("expected error for invalid version")
+	for _, version := range []int{0, 1, 5, 8} {
+		if _, err := Generate(version); err == nil {
+			t.Fatalf("expected error for version %d", version)
+		}
 	}
 }
 
-func TestFormatHuman(t *testing.T) {
-	id, _ := Generate("4")
-	formatted, err := Format(id, "human", "lower")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestFormat(t *testing.T) {
+	id := uuid.MustParse("0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1")
+	tests := []struct {
+		format, letterCase, want string
+	}{
+		{"human", "lower", "0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1"},
+		{"human", "upper", "0192A0B1-C2D3-7E4F-8A5B-6C7D8E9FA0B1"},
+		{"HUMAN", "Upper", "0192A0B1-C2D3-7E4F-8A5B-6C7D8E9FA0B1"},
+		{"hex", "lower", "0192a0b1c2d37e4f8a5b6c7d8e9fa0b1"},
+		{"hex", "upper", "0192A0B1C2D37E4F8A5B6C7D8E9FA0B1"},
+		{"base64", "lower", base64.StdEncoding.EncodeToString(id[:])},
+		{"base64url", "lower", base64.RawURLEncoding.EncodeToString(id[:])},
+		{"int", "lower", toInt(id)},
 	}
-	if formatted != strings.ToLower(id.String()) {
-		t.Fatalf("expected %s, got %s", strings.ToLower(id.String()), formatted)
-	}
-	if strings.ToUpper(formatted) == formatted {
-		t.Fatalf("expected lowercase formatting, got %s", formatted)
-	}
-}
-
-func TestFormatBase64(t *testing.T) {
-	id, _ := Generate("4")
-	formatted, err := Format(id, "base64", "lower")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(formatted)
-	if err != nil {
-		t.Fatalf("invalid base64 output: %v", err)
-	}
-	if len(decoded) != 16 {
-		t.Fatalf("expected 16 bytes, got %d", len(decoded))
-	}
-}
-
-func TestFormatInt(t *testing.T) {
-	id, _ := Generate("4")
-	formatted, err := Format(id, "int", "lower")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if strings.IndexFunc(formatted, func(r rune) bool { return r < '0' || r > '9' }) != -1 {
-		t.Fatalf("expected digits only, got %s", formatted)
-	}
-	num := new(big.Int)
-	if _, ok := num.SetString(formatted, 10); !ok {
-		t.Fatalf("failed to parse int format: %s", formatted)
+	for _, tt := range tests {
+		got, err := Format(id, tt.format, tt.letterCase)
+		if err != nil {
+			t.Fatalf("Format(%q, %q): unexpected error: %v", tt.format, tt.letterCase, err)
+		}
+		if got != tt.want {
+			t.Fatalf("Format(%q, %q) = %q, want %q", tt.format, tt.letterCase, got, tt.want)
+		}
 	}
 }
 
 func TestFormatInvalid(t *testing.T) {
-	id, _ := Generate("4")
+	id := mustGenerate(t, 4)
 	if _, err := Format(id, "unknown", "lower"); err == nil {
 		t.Fatal("expected error for invalid format")
 	}
-}
-
-func TestFormatHumanUpper(t *testing.T) {
-	id, _ := Generate("4")
-	formatted, err := Format(id, "human", "upper")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if formatted != strings.ToUpper(id.String()) {
-		t.Fatalf("expected uppercase format %s, got %s", strings.ToUpper(id.String()), formatted)
-	}
-}
-
-func TestFormatHumanInvalidCase(t *testing.T) {
-	id, _ := Generate("4")
 	if _, err := Format(id, "human", "mixed"); err == nil {
 		t.Fatal("expected error for invalid human case")
 	}
 }
 
-func TestValidateHuman(t *testing.T) {
-	id, _ := Generate("4")
-	version, err := Validate(id.String(), "")
-	if err != nil {
-		t.Fatalf("expected validation success, got %v", err)
-	}
-	if version != 4 {
-		t.Fatalf("expected version 4, got %d", version)
-	}
-}
-
-func TestValidateBase64WithConstraint(t *testing.T) {
-	id, _ := Generate("7")
-	encoded := base64.StdEncoding.EncodeToString(id[:])
-	version, err := Validate(encoded, "7")
-	if err != nil {
-		t.Fatalf("expected validation success, got %v", err)
-	}
-	if version != 7 {
-		t.Fatalf("expected version 7, got %d", version)
+func TestFormatRoundTrip(t *testing.T) {
+	for _, version := range []int{4, 7} {
+		id := mustGenerate(t, version)
+		for _, format := range []string{"human", "hex", "base64", "base64url", "int"} {
+			for _, letterCase := range []string{"lower", "upper"} {
+				formatted, err := Format(id, format, letterCase)
+				if err != nil {
+					t.Fatalf("format %s: %v", format, err)
+				}
+				got, err := Validate(formatted, version)
+				if err != nil {
+					t.Fatalf("validate %s %q: %v", format, formatted, err)
+				}
+				if got != id {
+					t.Fatalf("validate %s: expected %s, got %s", format, id, got)
+				}
+			}
+		}
 	}
 }
 
 func TestValidateIntFormatMismatch(t *testing.T) {
-	id, _ := Generate("7")
-	num := new(big.Int).SetBytes(id[:]).Text(10)
-	if _, err := Validate(num, "4"); err == nil {
+	id := mustGenerate(t, 7)
+	if _, err := Validate(toInt(id), 4); err == nil {
 		t.Fatal("expected version mismatch error")
 	}
 }
 
-func TestValidateUnsupportedVersion(t *testing.T) {
-	parsed := "6ba7b810-9dad-11d1-80b4-00c04fd430c8" // Version 1
-	if _, err := Validate(parsed, ""); err == nil {
-		t.Fatal("expected unsupported version error for auto-detect")
+func TestValidateRejects(t *testing.T) {
+	v7 := mustGenerate(t, 7)
+	tests := []struct {
+		name       string
+		input      string
+		constraint int
+	}{
+		{"version 1 auto-detect", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", 0},
+		{"version 1 constraint", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", 1},
+		// Digit-only input must be read as an integer, not as dash-less hex (which would yield v4).
+		{"32-digit integer", "11111111111141111111111111111111", 0},
+		{"non-RFC variant", "00000000-0000-4000-0000-000000000000", 0},
+		{"negative integer", "-" + toInt(v7), 0},
+		{"signed integer", "+" + toInt(v7), 0},
+		{"integer above 128 bits", "340282366920938463463374607431768211456", 0},
+		{"nil uuid", "0", 0},
+		{"short base64", base64.StdEncoding.EncodeToString(v7[:8]), 0},
+		{"empty", "", 0},
+		{"garbage", "not-a-uuid", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if id, err := Validate(tt.input, tt.constraint); err == nil {
+				t.Fatalf("expected error for %q, got %s", tt.input, id)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsLeadingZeroInt(t *testing.T) {
+	id := mustGenerate(t, 4)
+	if _, err := Validate("000"+toInt(id), 4); err != nil {
+		t.Fatalf("expected leading zeros to be accepted: %v", err)
+	}
+}
+
+func TestValidateHumanUppercase(t *testing.T) {
+	id := mustGenerate(t, 4)
+	if _, err := Validate(strings.ToUpper(id.String()), 0); err != nil {
+		t.Fatalf("expected uppercase to be accepted: %v", err)
+	}
+}
+
+func TestTimestamp(t *testing.T) {
+	ts, ok := Timestamp(uuid.MustParse("0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1"))
+	if !ok {
+		t.Fatal("expected timestamp for UUIDv7")
+	}
+	if want := time.Date(2024, 10, 18, 17, 34, 17, 299_000_000, time.UTC); !ts.Equal(want) {
+		t.Fatalf("expected %s, got %s", want, ts)
+	}
+
+	before := time.Now().Truncate(time.Millisecond)
+	ts, ok = Timestamp(mustGenerate(t, 7))
+	if !ok || ts.Before(before) || ts.After(time.Now()) {
+		t.Fatalf("expected timestamp of a fresh UUIDv7 to be now, got %s (ok=%v)", ts, ok)
+	}
+
+	if _, ok := Timestamp(mustGenerate(t, 4)); ok {
+		t.Fatal("expected no timestamp for UUIDv4")
 	}
 }
