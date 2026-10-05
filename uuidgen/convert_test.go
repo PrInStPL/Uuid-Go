@@ -86,6 +86,9 @@ func TestConvertRejects(t *testing.T) {
 		{"integer above 128 bits", "340282366920938463463374607431768211456", "human", "lower", 0, "128-bit range"},
 		{"unknown target format", v7["human"], "octal", "lower", 0, "unsupported format"},
 		{"unknown case", v7["human"], "human", "mixed", 0, "unsupported case"},
+		// Steps run in order: an invalid input is reported before an invalid target format.
+		{"invalid input and target", "not-a-uuid", "octal", "lower", 0, "unsupported format or parse failure"},
+		{"wrong version and target", v7["human"], "octal", "lower", 4, "does not match constraint"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

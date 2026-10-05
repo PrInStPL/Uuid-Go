@@ -139,6 +139,8 @@ func TestConvertErrors(t *testing.T) {
 			"error: convert uuid: UUID version 7 does not match constraint 4\n"},
 		{"unknown target format", []string{"--format=octal", v7},
 			"error: convert uuid: unsupported format: use human, hex, base64, base64url, or int\n"},
+		{"invalid input and target format", []string{"--format=octal", "not-a-uuid"},
+			"error: convert uuid: invalid UUID: unsupported format or parse failure\n"},
 		{"32-digit integer", []string{"--format=human", "11111111111141111111111111111111"},
 			"error: convert uuid: invalid UUID: unsupported variant Reserved\n"},
 		{"two values", []string{"--format=hex", v7, v7},

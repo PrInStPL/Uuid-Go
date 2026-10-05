@@ -143,10 +143,8 @@ func Detect(input string) (string, error) {
 }
 
 // Convert validates the input like Validate and renders it in the given format.
+// The input is checked first, so an invalid input is reported before an invalid target format.
 func Convert(input string, version int, format, letterCase string) (string, error) {
-	if err := CheckFormat(format, letterCase); err != nil {
-		return "", err
-	}
 	id, err := Validate(input, version)
 	if err != nil {
 		return "", err
