@@ -8,14 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Minimum version from go.mod and the latest release.
+        go: ['1.21', 'stable']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
       - name: Check formatting
+        if: matrix.go == 'stable'
         run: test -z "$(gofmt -l .)"
       - name: Check go.mod is tidy
+        if: matrix.go == 'stable'
         run: go mod tidy -diff
       - run: go vet ./...
       - run: go test ./...
