@@ -5,13 +5,13 @@ Command-line tool for generating and validating UUIDv4 and UUIDv7 (RFC 9562).
 ## Install
 
 ```sh
-go install github.com/PrInStPL/Uuid-Go@latest
+go install github.com/PrInStPL/Uuid-Go/cmd/uuid@latest
 ```
 
-The binary is installed as `Uuid-Go`. To build it locally as `uuid-go` instead:
+The binary is installed as `uuid`. To build it locally instead:
 
 ```sh
-go build -o uuid-go .
+go build -o uuid ./cmd/uuid
 ```
 
 Requires Go 1.21 or newer.
@@ -19,10 +19,10 @@ Requires Go 1.21 or newer.
 Build metadata shown by `--help` can be set with `-ldflags`:
 
 ```sh
-go build -o uuid-go -ldflags "\
+go build -o uuid -ldflags "\
   -X main.buildVersion=1.0.0 \
   -X main.buildDate=$(date -u +%Y-%m-%d) \
-  -X main.buildNumber=42" .
+  -X main.buildNumber=42" ./cmd/uuid
 ```
 
 Without `-ldflags`, the version, commit date and revision embedded by the Go
@@ -35,21 +35,21 @@ carries no date, and the build number is only ever set via `-ldflags`.
 ## Usage
 
 ```sh
-uuid-go                       # UUIDv4, lowercase (default)
-uuid-go -7                    # UUIDv7 (same as --uuid=7)
-uuid-go -7 -n 5               # five UUIDv7, one per line
-uuid-go --case=upper          # uppercase
-uuid-go --format=hex          # 32 hex characters without dashes
-uuid-go --format=base64       # 16 raw bytes, standard base64
-uuid-go --format=base64url    # 16 raw bytes, URL-safe base64 without padding
-uuid-go --format=int          # unsigned 128-bit decimal integer
-uuid-go <id>                  # validate a UUID, auto-detecting its format
-uuid-go --format=hex <id>     # validate and convert to another format
-uuid-go --validate=<id>       # validate a UUID, auto-detecting its format
-uuid-go --validate=<id> -7    # validate and require version 7
-uuid-go --validate=<id> <id>  # validate several values
-uuid-go --validate=- < ids    # validate one value per line from stdin
-uuid-go --help                # usage and build information
+uuid                       # UUIDv4, lowercase (default)
+uuid -7                    # UUIDv7 (same as --uuid=7)
+uuid -7 -n 5               # five UUIDv7, one per line
+uuid --case=upper          # uppercase
+uuid --format=hex          # 32 hex characters without dashes
+uuid --format=base64       # 16 raw bytes, standard base64
+uuid --format=base64url    # 16 raw bytes, URL-safe base64 without padding
+uuid --format=int          # unsigned 128-bit decimal integer
+uuid <id>                  # validate a UUID, auto-detecting its format
+uuid --format=hex <id>     # validate and convert to another format
+uuid --validate=<id>       # validate a UUID, auto-detecting its format
+uuid --validate=<id> -7    # validate and require version 7
+uuid --validate=<id> <id>  # validate several values
+uuid --validate=- < ids    # validate one value per line from stdin
+uuid --help                # usage and build information
 ```
 
 `--case` applies to the `human` and `hex` formats.
@@ -57,7 +57,7 @@ uuid-go --help                # usage and build information
 ### Conversion
 
 ```sh
-uuid-go [--format=<format>] [--case=lower|upper] [-4|-7|--uuid=N] [--pure] <value>
+uuid [--format=<format>] [--case=lower|upper] [-4|-7|--uuid=N] [--pure] <value>
 ```
 
 The value is processed in three steps, and the first failing step stops with
@@ -75,9 +75,9 @@ Without `--format` only steps 1–2 run and the validation result is printed.
 | without `--format` | `valid uuid version N` | nothing — only the exit code (errors are silent too) |
 
 ```sh
-id=$(uuid-go --pure --format=base64url 0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1)
-if uuid-go --pure -7 "$value"; then echo "UUIDv7"; fi
-uuid-go --format=human -- -KGyw9TlT2CKe4ydDh8qOw  # "--" before a value starting with "-"
+id=$(uuid --pure --format=base64url 0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1)
+if uuid --pure -7 "$value"; then echo "UUIDv7"; fi
+uuid --format=human -- -KGyw9TlT2CKe4ydDh8qOw  # "--" before a value starting with "-"
 ```
 
 Options must come before the value. `-n` and `--validate` cannot be combined
