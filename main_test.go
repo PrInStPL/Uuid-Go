@@ -1,25 +1,25 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
-	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 )
 
-func runCommand(t *testing.T, args ...string) (string, error) {
+func runCommand(t *testing.T, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"run", "."}, args...)...)
-	output, err := cmd.CombinedOutput()
-	return string(output), err
+	var out, errOut bytes.Buffer
+	code = run(args, &out, &errOut)
+	return out.String(), errOut.String(), code
 }
 
 func TestHelpFlagIsExclusive(t *testing.T) {
-	output, err := runCommand(t, "--help", "--uuid=7", "--format=base64")
-	if err != nil {
-		t.Fatalf("help flag should exit successfully: %v\noutput: %s", err, output)
+	output, stderr, code := runCommand(t, "--help", "--uuid=7", "--format=base64")
+	if code != 0 {
+		t.Fatalf("help flag should exit successfully, got %d\nstderr: %s", code, stderr)
 	}
 	usageIdx := strings.Index(output, "Usage:")
 	if usageIdx == -1 {
@@ -38,46 +38,62 @@ func TestHelpFlagIsExclusive(t *testing.T) {
 }
 
 func TestQuickVersionFlags(t *testing.T) {
-	output, err := runCommand(t, "-4")
-	if err != nil {
-		t.Fatalf("-4 flag failed: %v\noutput: %s", err, output)
+	tests := []struct {
+		args    []string
+		version uuid.Version
+	}{
+		{[]string{"-4"}, 4},
+		{[]string{"-7"}, 7},
+		{[]string{"--uuid=7"}, 7},
+		{nil, 4},
 	}
-	id, parseErr := uuid.Parse(strings.TrimSpace(output))
-	if parseErr != nil {
-		t.Fatalf("failed to parse uuid output: %v", parseErr)
-	}
-	if id.Version() != 4 {
-		t.Fatalf("expected version 4, got %d", id.Version())
-	}
-
-	output, err = runCommand(t, "--uuid=7")
-	if err != nil {
-		t.Fatalf("--uuid flag failed: %v\noutput: %s", err, output)
-	}
-	id, parseErr = uuid.Parse(strings.TrimSpace(output))
-	if parseErr != nil {
-		t.Fatalf("failed to parse uuid output: %v", parseErr)
-	}
-	if id.Version() != 7 {
-		t.Fatalf("expected version 7, got %d", id.Version())
+	for _, tt := range tests {
+		output, stderr, code := runCommand(t, tt.args...)
+		if code != 0 {
+			t.Fatalf("%v failed with code %d\nstderr: %s", tt.args, code, stderr)
+		}
+		id, err := uuid.Parse(strings.TrimSpace(output))
+		if err != nil {
+			t.Fatalf("%v: failed to parse uuid output: %v", tt.args, err)
+		}
+		if id.Version() != tt.version {
+			t.Fatalf("%v: expected version %d, got %d", tt.args, tt.version, id.Version())
+		}
 	}
 }
 
-func TestQuickFlagConflicts(t *testing.T) {
-	output, err := runCommand(t, "-4", "-7")
-	if err == nil {
-		t.Fatalf("expected conflict error when using -4 and -7 together")
+func TestErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"conflicting shortcuts", []string{"-4", "-7"}, "conflicting"},
+		{"unsupported version", []string{"--uuid=5"}, "unsupported UUID version"},
+		{"invalid format", []string{"--format=hex"}, "unsupported format"},
+		{"positional args", []string{"extra"}, "unexpected arguments"},
 	}
-	if !strings.Contains(output, "conflicting") {
-		t.Fatalf("expected conflict message, got: %s", output)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, stderr, code := runCommand(t, tt.args...)
+			if code == 0 {
+				t.Fatalf("expected failure, got output %q", output)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("expected %q in stderr, got: %s", tt.want, stderr)
+			}
+			if !strings.HasPrefix(stderr, "error: ") {
+				t.Fatalf("expected plain error prefix without timestamp, got: %s", stderr)
+			}
+		})
 	}
 }
 
 func TestValidateAutoDetect(t *testing.T) {
 	id := uuid.New()
-	output, err := runCommand(t, "--validate="+id.String())
-	if err != nil {
-		t.Fatalf("validation should succeed: %v\noutput: %s", err, output)
+	output, stderr, code := runCommand(t, "--validate="+id.String())
+	if code != 0 {
+		t.Fatalf("validation should succeed, got %d\nstderr: %s", code, stderr)
 	}
 	if !strings.Contains(output, "valid uuid version 4") {
 		t.Fatalf("expected validation confirmation for version 4, got %s", output)
@@ -85,22 +101,28 @@ func TestValidateAutoDetect(t *testing.T) {
 }
 
 func TestValidateWithConstraintMismatch(t *testing.T) {
-	id, _ := uuid.NewV7()
-	output, err := runCommand(t, "--validate="+id.String(), "--uuid=4")
-	if err == nil {
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code := runCommand(t, "--validate="+id.String(), "--uuid=4")
+	if code == 0 {
 		t.Fatalf("expected validation to fail for version mismatch")
 	}
-	if !strings.Contains(output, "does not match constraint") {
-		t.Fatalf("expected constraint mismatch message, got: %s", output)
+	if !strings.Contains(stderr, "does not match constraint") {
+		t.Fatalf("expected constraint mismatch message, got: %s", stderr)
 	}
 }
 
 func TestValidateBase64VersionSelection(t *testing.T) {
-	id, _ := uuid.NewV7()
-	encoded := base64.StdEncoding.EncodeToString(id[:])
-	output, err := runCommand(t, "--validate="+encoded, "-7")
+	id, err := uuid.NewV7()
 	if err != nil {
-		t.Fatalf("validation should succeed for base64 input: %v\noutput: %s", err, output)
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(id[:])
+	output, stderr, code := runCommand(t, "--validate="+encoded, "-7")
+	if code != 0 {
+		t.Fatalf("validation should succeed for base64 input, got %d\nstderr: %s", code, stderr)
 	}
 	if !strings.Contains(output, "valid uuid version 7") {
 		t.Fatalf("expected base64 validation confirmation, got %s", output)

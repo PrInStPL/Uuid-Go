@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"io"
 	"os"
 	"strconv"
 
@@ -32,54 +32,76 @@ func (v *versionFlag) Set(s string) error {
 }
 
 func (v *versionFlag) String() string {
-	return fmt.Sprintf("%d", v.value)
+	return strconv.Itoa(v.value)
 }
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run executes the CLI and returns the process exit code.
+func run(args []string, stdout, stderr io.Writer) int {
+	name := os.Args[0]
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
 	var (
 		uuidVersion = &versionFlag{value: 4}
-		format      = flag.String("format", "human", "Output format: human, base64, int")
-		letterCase  = flag.String("case", "lower", "Output letter case for human format: lower or upper")
+		format      = fs.String("format", "human", "Output format: human, base64, int")
+		letterCase  = fs.String("case", "lower", "Output letter case for human format: lower or upper")
 		showInfo    bool
 		quickV4     bool
 		quickV7     bool
 		validateStr string
 	)
 
-	flag.Var(uuidVersion, "uuid", "UUID version to generate (4 or 7)")
-	flag.BoolVar(&showInfo, "help", false, "Display build information and usage (exclusive)")
-	flag.BoolVar(&showInfo, "h", false, "Display build information and usage (exclusive shorthand)")
-	flag.BoolVar(&quickV4, "4", false, "Shortcut for UUID version 4")
-	flag.BoolVar(&quickV7, "7", false, "Shortcut for UUID version 7")
-	flag.StringVar(&validateStr, "validate", "", "Validate the provided UUID value (human, base64, or int)")
+	fs.Var(uuidVersion, "uuid", "UUID version to generate (4 or 7)")
+	fs.BoolVar(&showInfo, "help", false, "Display build information and usage (exclusive)")
+	fs.BoolVar(&showInfo, "h", false, "Display build information and usage (exclusive shorthand)")
+	fs.BoolVar(&quickV4, "4", false, "Shortcut for UUID version 4")
+	fs.BoolVar(&quickV7, "7", false, "Shortcut for UUID version 7")
+	fs.StringVar(&validateStr, "validate", "", "Validate the provided UUID value (human, base64, or int)")
 
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "UUID generator\n\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options]\n\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "Options:\n")
-		flag.PrintDefaults()
-		fmt.Fprintf(flag.CommandLine.Output(), "\nExamples:\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s                   # UUIDv4 human readable lowercase (default)\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s --uuid=7          # UUIDv7 human readable lowercase\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s -7                # UUIDv7 quick flag\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s --format=base64   # UUIDv4 encoded in base64\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s --case=upper      # UUIDv4 human readable uppercase\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s --validate=<id>   # Validate provided UUID (auto-detect format)\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  %s --help            # Display build information and usage\n", os.Args[0])
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintf(out, "UUID generator\n\n")
+		fmt.Fprintf(out, "Usage: %s [options]\n\n", name)
+		fmt.Fprintf(out, "Options:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(out, "\nExamples:\n")
+		fmt.Fprintf(out, "  %s                   # UUIDv4 human readable lowercase (default)\n", name)
+		fmt.Fprintf(out, "  %s --uuid=7          # UUIDv7 human readable lowercase\n", name)
+		fmt.Fprintf(out, "  %s -7                # UUIDv7 quick flag\n", name)
+		fmt.Fprintf(out, "  %s --format=base64   # UUIDv4 encoded in base64\n", name)
+		fmt.Fprintf(out, "  %s --case=upper      # UUIDv4 human readable uppercase\n", name)
+		fmt.Fprintf(out, "  %s --validate=<id>   # Validate provided UUID (auto-detect format)\n", name)
+		fmt.Fprintf(out, "  %s --help            # Display build information and usage\n", name)
 	}
 
-	flag.Parse()
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if showInfo {
-		flag.Usage()
-		fmt.Printf("\nversion: %s\n", buildVersion)
-		fmt.Printf("build date: %s\n", buildDate)
-		fmt.Printf("build number: %s\n", buildNumber)
-		return
+		fs.SetOutput(stdout)
+		fs.Usage()
+		fmt.Fprintf(stdout, "\nversion: %s\n", buildVersion)
+		fmt.Fprintf(stdout, "build date: %s\n", buildDate)
+		fmt.Fprintf(stdout, "build number: %s\n", buildNumber)
+		return 0
+	}
+
+	fail := func(format string, a ...any) int {
+		fmt.Fprintf(stderr, "error: "+format+"\n", a...)
+		return 1
+	}
+
+	if fs.NArg() > 0 {
+		return fail("unexpected arguments: %v", fs.Args())
 	}
 
 	if quickV4 && quickV7 {
-		log.Fatalf("conflicting UUID shortcuts: choose only one of -4 or -7")
+		return fail("conflicting UUID shortcuts: choose only one of -4 or -7")
 	}
 
 	selectedVersion := uuidVersion.value
@@ -93,27 +115,32 @@ func main() {
 	uuidExplicit := quickV4 || quickV7 || uuidVersion.set
 
 	if validateStr != "" {
-		forced := ""
+		forced := 0
 		if uuidExplicit {
-			forced = fmt.Sprintf("%d", selectedVersion)
+			forced = selectedVersion
 		}
 		version, err := uuidgen.Validate(validateStr, forced)
 		if err != nil {
-			log.Fatalf("validate uuid: %v", err)
+			return fail("validate uuid: %v", err)
 		}
-		fmt.Printf("valid uuid version %d\n", version)
-		return
+		fmt.Fprintf(stdout, "valid uuid version %d\n", version)
+		return 0
 	}
 
-	uuidValue, err := uuidgen.Generate(fmt.Sprintf("%d", selectedVersion))
+	if err := uuidgen.CheckFormat(*format, *letterCase); err != nil {
+		return fail("format uuid: %v", err)
+	}
+
+	uuidValue, err := uuidgen.Generate(selectedVersion)
 	if err != nil {
-		log.Fatalf("generate uuid: %v", err)
+		return fail("generate uuid: %v", err)
 	}
 
 	output, err := uuidgen.Format(uuidValue, *format, *letterCase)
 	if err != nil {
-		log.Fatalf("format uuid: %v", err)
+		return fail("format uuid: %v", err)
 	}
 
-	fmt.Println(output)
+	fmt.Fprintln(stdout, output)
+	return 0
 }
