@@ -60,6 +60,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		quickV4     bool
 		quickV7     bool
 		validateStr string
+		pure        bool
 	)
 
 	fs.Var(uuidVersion, "uuid", "UUID version to generate (4 or 7)")
@@ -68,11 +69,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.BoolVar(&quickV4, "4", false, "Shortcut for UUID version 4")
 	fs.BoolVar(&quickV7, "7", false, "Shortcut for UUID version 7")
 	fs.StringVar(&validateStr, "validate", "", "Validate the provided UUID value (any output format); \"-\" reads values from stdin")
+	fs.BoolVar(&pure, "pure", false, "With <value>: print only the converted value without a trailing newline, or nothing at all when only validating")
 
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintf(out, "UUID generator\n\n")
 		fmt.Fprintf(out, "Usage: %s [options]\n", name)
+		fmt.Fprintf(out, "       %s [--format=<format>] [--pure] [options] <value>\n", name)
 		fmt.Fprintf(out, "       %s --validate=<id> [<id>...]\n\n", name)
 		fmt.Fprintf(out, "Options:\n")
 		fs.PrintDefaults()
@@ -82,6 +85,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(out, "  %s -7 -n 5             # five UUIDv7, one per line\n", name)
 		fmt.Fprintf(out, "  %s --format=base64     # UUIDv4 encoded in base64\n", name)
 		fmt.Fprintf(out, "  %s --case=upper        # UUIDv4 human readable uppercase\n", name)
+		fmt.Fprintf(out, "  %s <id>                # Validate provided UUID (auto-detect format)\n", name)
+		fmt.Fprintf(out, "  %s --format=hex <id>   # Validate and convert UUID to another format\n", name)
+		fmt.Fprintf(out, "  %s --pure <id>         # Validate silently, result in exit code only\n", name)
 		fmt.Fprintf(out, "  %s --validate=<id>     # Validate provided UUID (auto-detect format)\n", name)
 		fmt.Fprintf(out, "  %s --validate=- < ids  # Validate one UUID per line from stdin\n", name)
 		fmt.Fprintf(out, "  %s --help              # Display build information and usage\n", name)
@@ -116,6 +122,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	uuidExplicit := quickV4 || quickV7 || uuidVersion.set
+
+	if pure && validateStr != "" {
+		return fail("--pure cannot be used with --validate")
+	}
 
 	if validateStr != "" {
 		for _, flagName := range []string{"format", "case", "n"} {
@@ -155,7 +165,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if fs.NArg() > 0 {
-		return fail("unexpected arguments: %v", fs.Args())
+		forced := 0
+		if uuidExplicit {
+			forced = selectedVersion
+		}
+		return convert(fs, forced, pure, stdout, stderr)
+	}
+	if pure {
+		return fail("--pure requires a value to validate or convert")
 	}
 	if *count < 1 {
 		return fail("-n must be at least 1")
@@ -178,6 +195,54 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return fail("format uuid: %v", err)
 		}
 		fmt.Fprintln(w, output)
+	}
+	return 0
+}
+
+// convert validates the single positional value and, when --format is given,
+// prints it in that format; without --format it only reports the validation result.
+// Each step (format detection, validation, conversion) stops at the first error.
+func convert(fs *flag.FlagSet, forced int, pure bool, stdout, stderr io.Writer) int {
+	fail := func(format string, a ...any) int {
+		fmt.Fprintf(stderr, "error: "+format+"\n", a...)
+		return 1
+	}
+	if fs.NArg() > 1 {
+		return fail("expected a single value, got %d: %v (options must come before the value)", fs.NArg(), fs.Args())
+	}
+	if isFlagSet(fs, "n") {
+		return fail("-n cannot be used with a value")
+	}
+	value := fs.Arg(0)
+	format := fs.Lookup("format").Value.String()
+	letterCase := fs.Lookup("case").Value.String()
+
+	if !isFlagSet(fs, "format") {
+		if isFlagSet(fs, "case") {
+			return fail("-case requires --format")
+		}
+		id, err := uuidgen.Validate(value, forced)
+		if pure {
+			if err != nil {
+				return 1
+			}
+			return 0
+		}
+		if err != nil {
+			return fail("validate uuid: %v", err)
+		}
+		fmt.Fprintln(stdout, describe(id))
+		return 0
+	}
+
+	output, err := uuidgen.Convert(value, forced, format, letterCase)
+	if err != nil {
+		return fail("convert uuid: %v", err)
+	}
+	if pure {
+		fmt.Fprint(stdout, output)
+	} else {
+		fmt.Fprintln(stdout, output)
 	}
 	return 0
 }

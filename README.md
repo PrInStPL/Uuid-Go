@@ -39,6 +39,8 @@ uuid-go --format=hex          # 32 hex characters without dashes
 uuid-go --format=base64       # 16 raw bytes, standard base64
 uuid-go --format=base64url    # 16 raw bytes, URL-safe base64 without padding
 uuid-go --format=int          # unsigned 128-bit decimal integer
+uuid-go <id>                  # validate a UUID, auto-detecting its format
+uuid-go --format=hex <id>     # validate and convert to another format
 uuid-go --validate=<id>       # validate a UUID, auto-detecting its format
 uuid-go --validate=<id> -7    # validate and require version 7
 uuid-go --validate=<id> <id>  # validate several values
@@ -47,6 +49,35 @@ uuid-go --help                # usage and build information
 ```
 
 `--case` applies to the `human` and `hex` formats.
+
+### Conversion
+
+```sh
+uuid-go [--format=<format>] [--case=lower|upper] [-4|-7|--uuid=N] [--pure] <value>
+```
+
+The value is processed in three steps, and the first failing step stops with
+an error on stderr, exit code 1 and nothing on stdout:
+
+1. its format is recognised by pattern (any input format listed below),
+2. it is validated (RFC 9562 variant, version 4 or 7, or the forced version),
+3. it is converted to `--format` (with `--case` for `human` and `hex`).
+
+Without `--format` only steps 1–2 run and the validation result is printed.
+
+| | default | `--pure` |
+|---|---|---|
+| with `--format` | the converted value and a newline | the converted value only, no newline |
+| without `--format` | `valid uuid version N` | nothing — only the exit code (errors are silent too) |
+
+```sh
+id=$(uuid-go --pure --format=base64url 0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1)
+if uuid-go --pure -7 "$value"; then echo "UUIDv7"; fi
+uuid-go --format=human -- -KGyw9TlT2CKe4ydDh8qOw  # "--" before a value starting with "-"
+```
+
+Options must come before the value. `-n` and `--validate` cannot be combined
+with a value-based conversion; use `--validate` for several values or stdin.
 
 ### Validation
 
