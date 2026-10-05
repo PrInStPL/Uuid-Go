@@ -27,6 +27,13 @@ func TestWriteBuildInfo(t *testing.T) {
 			"\nversion: v1.2.4-0.20261005090906-4e4593dd695e\nbuild date: 2026-10-05T09:09:06Z\nbuild number: 0\nrevision: 4e4593dd695e\n"},
 		{"pre-release pseudo-version with +dirty", &debug.BuildInfo{Main: debug.Module{Version: "v1.3.0-rc.1.0.20261005090906-4e4593dd695e+dirty"}}, "dev", "unknown", "0",
 			"\nversion: v1.3.0-rc.1.0.20261005090906-4e4593dd695e+dirty\nbuild date: 2026-10-05T09:09:06Z\nbuild number: 0\nrevision: 4e4593dd695e\n"},
+		{"pseudo-version for a new major version", &debug.BuildInfo{Main: debug.Module{Version: "v2.0.0-20261005090906-4e4593dd695e"}}, "dev", "unknown", "0",
+			"\nversion: v2.0.0-20261005090906-4e4593dd695e\nbuild date: 2026-10-05T09:09:06Z\nbuild number: 0\nrevision: 4e4593dd695e\n"},
+		// Ordinary tags that only end like a pseudo-version must not get a date or revision.
+		{"tagged pre-release ending in timestamp and hash", &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3-rc.20261005090906-4e4593dd695e"}}, "dev", "unknown", "0",
+			"\nversion: v1.2.3-rc.20261005090906-4e4593dd695e\nbuild date: unknown\nbuild number: 0\n"},
+		{"tag with timestamp but no 0. or 0.0 base", &debug.BuildInfo{Main: debug.Module{Version: "v1.2.0-20261005090906-4e4593dd695e"}}, "dev", "unknown", "0",
+			"\nversion: v1.2.0-20261005090906-4e4593dd695e\nbuild date: unknown\nbuild number: 0\n"},
 		{"tagged release has no date", &debug.BuildInfo{Main: debug.Module{Version: "v1.2.3"}}, "dev", "unknown", "0",
 			"\nversion: v1.2.3\nbuild date: unknown\nbuild number: 0\n"},
 		{"local build", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, "dev", "unknown", "0",

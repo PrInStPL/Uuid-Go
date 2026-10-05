@@ -298,10 +298,12 @@ func printBuildInfo(w io.Writer) {
 	writeBuildInfo(w, info, buildVersion, buildDate, buildNumber)
 }
 
-// pseudoVersion matches the commit time and revision at the end of a Go
-// pseudo-version such as v0.0.0-20261005090906-4e4593dd695e (also the
-// vX.Y.(Z+1)-0.… and vX.Y.Z-pre.0.… forms, optionally with a +suffix).
-var pseudoVersion = regexp.MustCompile(`[-.](\d{14})-([0-9a-f]{12})(?:\+[0-9A-Za-z.-]+)?$`)
+// pseudoVersion matches a complete Go pseudo-version, capturing its commit time and
+// revision. It follows golang.org/x/mod/module's grammar, which allows three forms:
+// vX.0.0-yyyymmddhhmmss-rev, vX.Y.Z-pre.0.yyyymmddhhmmss-rev and
+// vX.Y.(Z+1)-0.yyyymmddhhmmss-rev, each optionally followed by +build metadata.
+// Ordinary tags that merely end like one (e.g. v1.2.3-rc.20261005090906-4e4593dd695e) do not match.
+var pseudoVersion = regexp.MustCompile(`^v[0-9]+\.(?:0\.0-|[0-9]+\.[0-9]+-(?:[^+]*\.)?0\.)([0-9]{14})-([A-Za-z0-9]+)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 
 // writeBuildInfo prints version, build date, build number and revision. Values set via
 // -ldflags take precedence, then VCS settings, then the module pseudo-version.
