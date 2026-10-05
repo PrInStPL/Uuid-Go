@@ -26,7 +26,11 @@ go build -o uuid-go -ldflags "\
 ```
 
 Without `-ldflags`, the version, commit date and revision embedded by the Go
-toolchain are shown instead (e.g. the module version for `go install`).
+toolchain are shown instead. A build from a git checkout uses the commit's
+VCS data; `go install …@<commit or branch>` has no VCS data, so the commit date
+(UTC) and abbreviated revision are read from the module pseudo-version
+(e.g. `v0.0.0-20261005090906-4e4593dd695e`). A tagged release such as `v1.2.3`
+carries no date, and the build number is only ever set via `-ldflags`.
 
 ## Usage
 
