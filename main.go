@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -293,9 +294,22 @@ func isFlagSet(fs *flag.FlagSet, name string) bool {
 // printBuildInfo prints build metadata, falling back to the information embedded by
 // the Go toolchain (e.g. for `go install`) when it was not set via -ldflags.
 func printBuildInfo(w io.Writer) {
-	version, date, number := buildVersion, buildDate, buildNumber
+	info, _ := debug.ReadBuildInfo()
+	writeBuildInfo(w, info, buildVersion, buildDate, buildNumber)
+}
+
+// pseudoVersion matches a complete Go pseudo-version, capturing its commit time and
+// revision. It follows golang.org/x/mod/module's grammar, which allows three forms:
+// vX.0.0-yyyymmddhhmmss-rev, vX.Y.Z-pre.0.yyyymmddhhmmss-rev and
+// vX.Y.(Z+1)-0.yyyymmddhhmmss-rev, each optionally followed by +build metadata.
+// Ordinary tags that merely end like one (e.g. v1.2.3-rc.20261005090906-4e4593dd695e) do not match.
+var pseudoVersion = regexp.MustCompile(`^v[0-9]+\.(?:0\.0-|[0-9]+\.[0-9]+-(?:[^+]*\.)?0\.)([0-9]{14})-([A-Za-z0-9]+)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+// writeBuildInfo prints version, build date, build number and revision. Values set via
+// -ldflags take precedence, then VCS settings, then the module pseudo-version.
+func writeBuildInfo(w io.Writer, info *debug.BuildInfo, version, date, number string) {
 	revision, modified := "", false
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if info != nil {
 		if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
 			version = info.Main.Version
 		}
@@ -311,6 +325,18 @@ func printBuildInfo(w io.Writer) {
 				revision = s.Value
 			case "vcs.modified":
 				modified = s.Value == "true"
+			}
+		}
+		// Modules built by `go install pkg@version` carry no VCS settings, but a
+		// pseudo-version encodes the commit time (UTC) and an abbreviated revision.
+		if m := pseudoVersion.FindStringSubmatch(info.Main.Version); m != nil {
+			if date == "unknown" {
+				if t, err := time.Parse("20060102150405", m[1]); err == nil {
+					date = t.UTC().Format(time.RFC3339)
+				}
+			}
+			if revision == "" {
+				revision = m[2]
 			}
 		}
 	}
