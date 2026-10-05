@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -50,7 +51,10 @@ func TestFormat(t *testing.T) {
 		{"human", "lower", "0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1"},
 		{"human", "upper", "0192A0B1-C2D3-7E4F-8A5B-6C7D8E9FA0B1"},
 		{"HUMAN", "Upper", "0192A0B1-C2D3-7E4F-8A5B-6C7D8E9FA0B1"},
+		{"hex", "lower", "0192a0b1c2d37e4f8a5b6c7d8e9fa0b1"},
+		{"hex", "upper", "0192A0B1C2D37E4F8A5B6C7D8E9FA0B1"},
 		{"base64", "lower", base64.StdEncoding.EncodeToString(id[:])},
+		{"base64url", "lower", base64.RawURLEncoding.EncodeToString(id[:])},
 		{"int", "lower", toInt(id)},
 	}
 	for _, tt := range tests {
@@ -77,7 +81,7 @@ func TestFormatInvalid(t *testing.T) {
 func TestFormatRoundTrip(t *testing.T) {
 	for _, version := range []int{4, 7} {
 		id := mustGenerate(t, version)
-		for _, format := range []string{"human", "base64", "int"} {
+		for _, format := range []string{"human", "hex", "base64", "base64url", "int"} {
 			for _, letterCase := range []string{"lower", "upper"} {
 				formatted, err := Format(id, format, letterCase)
 				if err != nil {
@@ -87,8 +91,8 @@ func TestFormatRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatalf("validate %s %q: %v", format, formatted, err)
 				}
-				if int(got) != version {
-					t.Fatalf("validate %s: expected version %d, got %d", format, version, got)
+				if got != id {
+					t.Fatalf("validate %s: expected %s, got %s", format, id, got)
 				}
 			}
 		}
@@ -124,8 +128,8 @@ func TestValidateRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if version, err := Validate(tt.input, tt.constraint); err == nil {
-				t.Fatalf("expected error for %q, got version %d", tt.input, version)
+			if id, err := Validate(tt.input, tt.constraint); err == nil {
+				t.Fatalf("expected error for %q, got %s", tt.input, id)
 			}
 		})
 	}
@@ -142,5 +146,25 @@ func TestValidateHumanUppercase(t *testing.T) {
 	id := mustGenerate(t, 4)
 	if _, err := Validate(strings.ToUpper(id.String()), 0); err != nil {
 		t.Fatalf("expected uppercase to be accepted: %v", err)
+	}
+}
+
+func TestTimestamp(t *testing.T) {
+	ts, ok := Timestamp(uuid.MustParse("0192a0b1-c2d3-7e4f-8a5b-6c7d8e9fa0b1"))
+	if !ok {
+		t.Fatal("expected timestamp for UUIDv7")
+	}
+	if want := time.Date(2024, 10, 18, 17, 34, 17, 299_000_000, time.UTC); !ts.Equal(want) {
+		t.Fatalf("expected %s, got %s", want, ts)
+	}
+
+	before := time.Now().Truncate(time.Millisecond)
+	ts, ok = Timestamp(mustGenerate(t, 7))
+	if !ok || ts.Before(before) || ts.After(time.Now()) {
+		t.Fatalf("expected timestamp of a fresh UUIDv7 to be now, got %s (ok=%v)", ts, ok)
+	}
+
+	if _, ok := Timestamp(mustGenerate(t, 4)); ok {
+		t.Fatal("expected no timestamp for UUIDv4")
 	}
 }

@@ -2,10 +2,12 @@ package uuidgen
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -30,65 +32,85 @@ func Generate(version int) (uuid.UUID, error) {
 // CheckFormat reports whether the format and letter case options are valid.
 func CheckFormat(format string, letterCase string) error {
 	switch strings.ToLower(format) {
-	case "human":
+	case "human", "hex":
 		switch strings.ToLower(letterCase) {
 		case "lower", "upper":
 			return nil
 		default:
-			return errors.New("unsupported case for human format: use lower or upper")
+			return errors.New("unsupported case: use lower or upper")
 		}
-	case "base64", "int":
+	case "base64", "base64url", "int":
 		return nil
 	default:
-		return errors.New("unsupported format: use human, base64, or int")
+		return errors.New("unsupported format: use human, hex, base64, base64url, or int")
 	}
 }
 
-// Format renders the UUID using the specified format: "human" (default), "base64", or "int".
-// The letterCase parameter affects only the human format ("lower" or "upper").
+// Format renders the UUID using the specified format: "human" (default), "hex",
+// "base64", "base64url", or "int".
+// The letterCase parameter affects only the human and hex formats ("lower" or "upper").
 func Format(id uuid.UUID, format string, letterCase string) (string, error) {
 	if err := CheckFormat(format, letterCase); err != nil {
 		return "", err
 	}
+	var value string
 	switch strings.ToLower(format) {
 	case "base64":
 		return base64.StdEncoding.EncodeToString(id[:]), nil
+	case "base64url":
+		return base64.RawURLEncoding.EncodeToString(id[:]), nil
 	case "int":
 		return new(big.Int).SetBytes(id[:]).Text(10), nil
+	case "hex":
+		value = hex.EncodeToString(id[:])
 	default:
-		if strings.ToLower(letterCase) == "upper" {
-			return strings.ToUpper(id.String()), nil
-		}
-		return id.String(), nil
+		value = id.String()
 	}
+	if strings.ToLower(letterCase) == "upper" {
+		return strings.ToUpper(value), nil
+	}
+	return value, nil
 }
 
-// Validate checks whether the input represents an RFC 9562 UUID (human, base64, or int formats).
+// Validate checks whether the input represents an RFC 9562 UUID in any format
+// produced by Format, and returns the parsed UUID.
 // If version is non-zero (4 or 7), validation is constrained to that version.
 // When version is 0, the function accepts either UUIDv4 or UUIDv7.
-func Validate(input string, version int) (uuid.Version, error) {
+func Validate(input string, version int) (uuid.UUID, error) {
 	if version != 0 && !Supported(version) {
-		return 0, errors.New("invalid version constraint: use 4 or 7")
+		return uuid.Nil, errors.New("invalid version constraint: use 4 or 7")
 	}
 
 	candidate, err := parse(input)
 	if err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
 	if candidate.Variant() != uuid.RFC4122 {
-		return 0, fmt.Errorf("invalid UUID: unsupported variant %s", candidate.Variant())
+		return uuid.Nil, fmt.Errorf("invalid UUID: unsupported variant %s", candidate.Variant())
 	}
 
-	candidateVersion := candidate.Version()
+	candidateVersion := int(candidate.Version())
 	if version != 0 {
-		if int(candidateVersion) != version {
-			return candidateVersion, errors.New("UUID version does not match constraint")
+		if candidateVersion != version {
+			return uuid.Nil, fmt.Errorf("UUID version %d does not match constraint %d", candidateVersion, version)
 		}
-	} else if !Supported(int(candidateVersion)) {
-		return candidateVersion, errors.New("unsupported UUID version: expected 4 or 7")
+	} else if !Supported(candidateVersion) {
+		return uuid.Nil, fmt.Errorf("unsupported UUID version %d: expected 4 or 7", candidateVersion)
 	}
 
-	return candidateVersion, nil
+	return candidate, nil
+}
+
+// Timestamp returns the creation time encoded in a UUIDv7 (the first 48 bits, in Unix milliseconds).
+func Timestamp(id uuid.UUID) (time.Time, bool) {
+	if id.Version() != 7 {
+		return time.Time{}, false
+	}
+	var ms int64
+	for _, b := range id[:6] {
+		ms = ms<<8 | int64(b)
+	}
+	return time.UnixMilli(ms).UTC(), true
 }
 
 // parse detects the input format. Digit-only input is always treated as an integer,
@@ -100,8 +122,11 @@ func parse(input string) (uuid.UUID, error) {
 	if parsed, err := uuid.Parse(input); err == nil {
 		return parsed, nil
 	}
-	if decoded, err := base64.StdEncoding.DecodeString(input); err == nil && len(decoded) == 16 {
-		return uuid.FromBytes(decoded)
+	// Standard base64 of 16 bytes is 24 characters, unpadded URL-safe base64 is 22.
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawURLEncoding} {
+		if decoded, err := enc.DecodeString(input); err == nil && len(decoded) == 16 {
+			return uuid.FromBytes(decoded)
+		}
 	}
 	return uuid.Nil, errors.New("invalid UUID: unsupported format or parse failure")
 }

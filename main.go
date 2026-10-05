@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime/debug"
 	"strconv"
+	"strings"
+	"time"
 
-	"uuid-go/uuidgen"
+	"github.com/PrInStPL/Uuid-Go/uuidgen"
+	"github.com/google/uuid"
 )
 
 var (
@@ -36,19 +42,20 @@ func (v *versionFlag) String() string {
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 // run executes the CLI and returns the process exit code.
-func run(args []string, stdout, stderr io.Writer) int {
-	name := os.Args[0]
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	name := filepath.Base(os.Args[0])
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	var (
 		uuidVersion = &versionFlag{value: 4}
-		format      = fs.String("format", "human", "Output format: human, base64, int")
-		letterCase  = fs.String("case", "lower", "Output letter case for human format: lower or upper")
+		format      = fs.String("format", "human", "Output format: human, hex, base64, base64url, int")
+		letterCase  = fs.String("case", "lower", "Output letter case for human and hex formats: lower or upper")
+		count       = fs.Int("n", 1, "Number of UUIDs to generate")
 		showInfo    bool
 		quickV4     bool
 		quickV7     bool
@@ -60,22 +67,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&showInfo, "h", false, "Display build information and usage (exclusive shorthand)")
 	fs.BoolVar(&quickV4, "4", false, "Shortcut for UUID version 4")
 	fs.BoolVar(&quickV7, "7", false, "Shortcut for UUID version 7")
-	fs.StringVar(&validateStr, "validate", "", "Validate the provided UUID value (human, base64, or int)")
+	fs.StringVar(&validateStr, "validate", "", "Validate the provided UUID value (any output format); \"-\" reads values from stdin")
 
 	fs.Usage = func() {
 		out := fs.Output()
 		fmt.Fprintf(out, "UUID generator\n\n")
-		fmt.Fprintf(out, "Usage: %s [options]\n\n", name)
+		fmt.Fprintf(out, "Usage: %s [options]\n", name)
+		fmt.Fprintf(out, "       %s --validate=<id> [<id>...]\n\n", name)
 		fmt.Fprintf(out, "Options:\n")
 		fs.PrintDefaults()
 		fmt.Fprintf(out, "\nExamples:\n")
-		fmt.Fprintf(out, "  %s                   # UUIDv4 human readable lowercase (default)\n", name)
-		fmt.Fprintf(out, "  %s --uuid=7          # UUIDv7 human readable lowercase\n", name)
-		fmt.Fprintf(out, "  %s -7                # UUIDv7 quick flag\n", name)
-		fmt.Fprintf(out, "  %s --format=base64   # UUIDv4 encoded in base64\n", name)
-		fmt.Fprintf(out, "  %s --case=upper      # UUIDv4 human readable uppercase\n", name)
-		fmt.Fprintf(out, "  %s --validate=<id>   # Validate provided UUID (auto-detect format)\n", name)
-		fmt.Fprintf(out, "  %s --help            # Display build information and usage\n", name)
+		fmt.Fprintf(out, "  %s                     # UUIDv4 human readable lowercase (default)\n", name)
+		fmt.Fprintf(out, "  %s --uuid=7            # UUIDv7 human readable lowercase\n", name)
+		fmt.Fprintf(out, "  %s -7 -n 5             # five UUIDv7, one per line\n", name)
+		fmt.Fprintf(out, "  %s --format=base64     # UUIDv4 encoded in base64\n", name)
+		fmt.Fprintf(out, "  %s --case=upper        # UUIDv4 human readable uppercase\n", name)
+		fmt.Fprintf(out, "  %s --validate=<id>     # Validate provided UUID (auto-detect format)\n", name)
+		fmt.Fprintf(out, "  %s --validate=- < ids  # Validate one UUID per line from stdin\n", name)
+		fmt.Fprintf(out, "  %s --help              # Display build information and usage\n", name)
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -85,19 +94,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if showInfo {
 		fs.SetOutput(stdout)
 		fs.Usage()
-		fmt.Fprintf(stdout, "\nversion: %s\n", buildVersion)
-		fmt.Fprintf(stdout, "build date: %s\n", buildDate)
-		fmt.Fprintf(stdout, "build number: %s\n", buildNumber)
+		printBuildInfo(stdout)
 		return 0
 	}
 
 	fail := func(format string, a ...any) int {
 		fmt.Fprintf(stderr, "error: "+format+"\n", a...)
 		return 1
-	}
-
-	if fs.NArg() > 0 {
-		return fail("unexpected arguments: %v", fs.Args())
 	}
 
 	if quickV4 && quickV7 {
@@ -115,32 +118,144 @@ func run(args []string, stdout, stderr io.Writer) int {
 	uuidExplicit := quickV4 || quickV7 || uuidVersion.set
 
 	if validateStr != "" {
+		for _, flagName := range []string{"format", "case", "n"} {
+			if isFlagSet(fs, flagName) {
+				return fail("-%s cannot be used with --validate", flagName)
+			}
+		}
 		forced := 0
 		if uuidExplicit {
 			forced = selectedVersion
 		}
-		version, err := uuidgen.Validate(validateStr, forced)
-		if err != nil {
-			return fail("validate uuid: %v", err)
+
+		if validateStr != "-" && fs.NArg() == 0 {
+			id, err := uuidgen.Validate(validateStr, forced)
+			if err != nil {
+				return fail("validate uuid: %v", err)
+			}
+			fmt.Fprintln(stdout, describe(id))
+			return 0
 		}
-		fmt.Fprintf(stdout, "valid uuid version %d\n", version)
-		return 0
+
+		values, err := validateInputs(validateStr, fs.Args(), stdin)
+		if err != nil {
+			return fail("%v", err)
+		}
+		code := 0
+		for _, value := range values {
+			id, err := uuidgen.Validate(value, forced)
+			if err != nil {
+				fmt.Fprintf(stdout, "%s: invalid: %v\n", value, err)
+				code = 1
+				continue
+			}
+			fmt.Fprintf(stdout, "%s: %s\n", value, describe(id))
+		}
+		return code
 	}
 
+	if fs.NArg() > 0 {
+		return fail("unexpected arguments: %v", fs.Args())
+	}
+	if *count < 1 {
+		return fail("-n must be at least 1")
+	}
 	if err := uuidgen.CheckFormat(*format, *letterCase); err != nil {
 		return fail("format uuid: %v", err)
 	}
 
-	uuidValue, err := uuidgen.Generate(selectedVersion)
-	if err != nil {
-		return fail("generate uuid: %v", err)
+	w := bufio.NewWriter(stdout)
+	defer w.Flush()
+	for i := 0; i < *count; i++ {
+		uuidValue, err := uuidgen.Generate(selectedVersion)
+		if err != nil {
+			w.Flush()
+			return fail("generate uuid: %v", err)
+		}
+		output, err := uuidgen.Format(uuidValue, *format, *letterCase)
+		if err != nil {
+			w.Flush()
+			return fail("format uuid: %v", err)
+		}
+		fmt.Fprintln(w, output)
 	}
-
-	output, err := uuidgen.Format(uuidValue, *format, *letterCase)
-	if err != nil {
-		return fail("format uuid: %v", err)
-	}
-
-	fmt.Fprintln(stdout, output)
 	return 0
+}
+
+// validateInputs collects the values to validate: positional arguments after the
+// --validate value, or one value per non-empty stdin line when --validate is "-".
+func validateInputs(first string, rest []string, stdin io.Reader) ([]string, error) {
+	if first != "-" {
+		return append([]string{first}, rest...), nil
+	}
+	if len(rest) > 0 {
+		return nil, fmt.Errorf("unexpected arguments with --validate=-: %v", rest)
+	}
+	var values []string
+	scanner := bufio.NewScanner(stdin)
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			values = append(values, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read stdin: %v", err)
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("no values to validate on stdin")
+	}
+	return values, nil
+}
+
+func describe(id uuid.UUID) string {
+	msg := fmt.Sprintf("valid uuid version %d", id.Version())
+	if ts, ok := uuidgen.Timestamp(id); ok {
+		msg += fmt.Sprintf(" (timestamp %s)", ts.Format("2006-01-02T15:04:05.000Z07:00"))
+	}
+	return msg
+}
+
+func isFlagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
+// printBuildInfo prints build metadata, falling back to the information embedded by
+// the Go toolchain (e.g. for `go install`) when it was not set via -ldflags.
+func printBuildInfo(w io.Writer) {
+	version, date, number := buildVersion, buildDate, buildNumber
+	revision, modified := "", false
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		}
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.time":
+				if date == "unknown" {
+					if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
+						date = t.UTC().Format(time.RFC3339)
+					}
+				}
+			case "vcs.revision":
+				revision = s.Value
+			case "vcs.modified":
+				modified = s.Value == "true"
+			}
+		}
+	}
+	if modified && revision != "" {
+		revision += "-dirty"
+	}
+	fmt.Fprintf(w, "\nversion: %s\n", version)
+	fmt.Fprintf(w, "build date: %s\n", date)
+	fmt.Fprintf(w, "build number: %s\n", number)
+	if revision != "" {
+		fmt.Fprintf(w, "revision: %s\n", revision)
+	}
 }
