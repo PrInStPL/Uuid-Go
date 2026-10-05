@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
@@ -113,22 +114,72 @@ func Timestamp(id uuid.UUID) (time.Time, bool) {
 	return time.UnixMilli(ms).UTC(), true
 }
 
-// parse detects the input format. Digit-only input is always treated as an integer,
-// so a 32-digit number is never misread as dash-less hex.
-func parse(input string) (uuid.UUID, error) {
-	if isDigits(input) {
-		return parseInt(input)
-	}
-	if parsed, err := uuid.Parse(input); err == nil {
-		return parsed, nil
-	}
-	// Standard base64 of 16 bytes is 24 characters, unpadded URL-safe base64 is 22.
-	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawURLEncoding} {
-		if decoded, err := enc.DecodeString(input); err == nil && len(decoded) == 16 {
-			return uuid.FromBytes(decoded)
+var errUnrecognized = errors.New("invalid UUID: unsupported format or parse failure")
+
+// Input patterns, checked in order by Detect. Digit-only input is matched first,
+// so a 32-digit number is always an integer, never dash-less hex.
+var patterns = []struct {
+	format string
+	re     *regexp.Regexp
+}{
+	{"int", regexp.MustCompile(`^[0-9]+$`)},
+	{"human", regexp.MustCompile(`^(?:(?i:urn:uuid:)` + humanPattern + `|\{` + humanPattern + `\}|` + humanPattern + `)$`)},
+	{"hex", regexp.MustCompile(`^[0-9a-fA-F]{32}$`)},
+	{"base64", regexp.MustCompile(`^[A-Za-z0-9+/]{22}==$`)},
+	{"base64url", regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)},
+}
+
+const humanPattern = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+
+// Detect returns the format of the input ("human", "hex", "base64", "base64url" or "int")
+// by matching it against each format's pattern. It does not check that the value is a valid UUID.
+func Detect(input string) (string, error) {
+	for _, p := range patterns {
+		if p.re.MatchString(input) {
+			return p.format, nil
 		}
 	}
-	return uuid.Nil, errors.New("invalid UUID: unsupported format or parse failure")
+	return "", errUnrecognized
+}
+
+// Convert validates the input like Validate and renders it in the given format.
+func Convert(input string, version int, format, letterCase string) (string, error) {
+	if err := CheckFormat(format, letterCase); err != nil {
+		return "", err
+	}
+	id, err := Validate(input, version)
+	if err != nil {
+		return "", err
+	}
+	return Format(id, format, letterCase)
+}
+
+// parse decodes the input according to the format reported by Detect.
+func parse(input string) (uuid.UUID, error) {
+	format, err := Detect(input)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	switch format {
+	case "int":
+		return parseInt(input)
+	case "base64", "base64url":
+		enc := base64.StdEncoding
+		if format == "base64url" {
+			enc = base64.RawURLEncoding
+		}
+		decoded, err := enc.DecodeString(input)
+		if err != nil {
+			return uuid.Nil, errUnrecognized
+		}
+		return uuid.FromBytes(decoded)
+	default:
+		parsed, err := uuid.Parse(input)
+		if err != nil {
+			return uuid.Nil, errUnrecognized
+		}
+		return parsed, nil
+	}
 }
 
 func parseInt(input string) (uuid.UUID, error) {
@@ -139,16 +190,4 @@ func parseInt(input string) (uuid.UUID, error) {
 	var buf [16]byte
 	num.FillBytes(buf[:])
 	return uuid.UUID(buf), nil
-}
-
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }

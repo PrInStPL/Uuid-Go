@@ -81,7 +81,7 @@ func TestErrors(t *testing.T) {
 		{"conflicting shortcuts", []string{"-4", "-7"}, "conflicting"},
 		{"unsupported version", []string{"--uuid=5"}, "unsupported UUID version"},
 		{"invalid format", []string{"--format=octal"}, "unsupported format"},
-		{"positional args", []string{"extra"}, "unexpected arguments"},
+		{"positional value is validated", []string{"extra"}, "validate uuid: invalid UUID: unsupported format or parse failure"},
 		{"zero count", []string{"-n", "0"}, "-n must be at least 1"},
 		{"validate with format", []string{"--validate=x", "--format=int"}, "-format cannot be used with --validate"},
 		{"validate with case", []string{"--validate=x", "--case=upper"}, "-case cannot be used with --validate"},
